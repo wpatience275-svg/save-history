@@ -200,13 +200,15 @@ function startLevel(index, forceTutorial = false, endless = false) {
   afterIntro(forceTutorial);
 }
 function afterIntro(forceTutorial) {
-  if (!progress.tutorialSeen || forceTutorial) { $('intro').classList.add('hidden'); $('dragHint').classList.add('hidden'); runTutorial(() => { $('intro').classList.remove('hidden'); $('dragHint').classList.remove('hidden'); }); }
+  $('intro').classList.add('hidden');                     // no start card: the voyage simply begins
+  const g = G, go = () => setTimeout(() => { if (G === g) begin(); }, 700);
+  if (!progress.tutorialSeen || forceTutorial) { $('dragHint').classList.add('hidden'); runTutorial(go); } else go();
 }
 // ---------------- cinematic opening (once per session) ----------------
-let cineSeen = false, cineT = -1, cineDone = null, cineTimers = [];
+let cineStart = 0, cineSeen = false, cineT = -1, cineDone = null, cineTimers = [];
 const CINE_LINES = [[0.3, 'April 14, 1912. The North Atlantic.'], [3.4, 'The "unsinkable" Titanic races west at 22 knots...'], [6.6, '11:39 PM. The lookout sees something in the dark.']];
 function playCinematic(done) {
-  cineSeen = true; cineDone = done; cineT = 0; cam.mode = 'cine';
+  cineSeen = true; cineDone = done; cineT = 0; cineStart = performance.now(); cam.mode = 'cine';
   $('hud').classList.add('hidden'); $('cine').classList.remove('hidden'); $('cineText').textContent = '';
   cineTimers = CINE_LINES.map(([t, s]) => setTimeout(() => { $('cineText').textContent = ''; typeText($('cineText'), s); if (t > 6) Sfx.bell(3); }, t * 1000));
   cineTimers.push(setTimeout(endCinematic, 10000));
@@ -218,11 +220,13 @@ function endCinematic() {
   const d = cineDone; cineDone = null; d && d();
 }
 $('cineSkip').onclick = e => { e.stopPropagation(); Sfx.tap(); endCinematic(); };
+$('cine').addEventListener('pointerdown', e => { e.stopPropagation(); if (performance.now() - cineStart > 700) endCinematic(); });   // tap anywhere to skip
 
 function begin() {
-  if (!G || G.state !== 'intro' || !$('tutorial').classList.contains('hidden')) return;
-  G.state = 'play';
-  $('intro').classList.add('hidden'); $('dragHint').classList.add('hidden');
+  if (!G || G.state !== 'intro' || cineT >= 0 || !$('tutorial').classList.contains('hidden')) return;
+  G.state = 'play'; const g = G;
+  $('intro').classList.add('hidden');
+  if ((progress.voyages || 0) < 2) { $('dragHint').classList.remove('hidden'); setTimeout(() => { if (G === g) $('dragHint').classList.add('hidden'); }, 2600); } else $('dragHint').classList.add('hidden');   // the swipe hand only helps new captains
   Sfx.horn(); Music.setMode('danger');
   for (let i = 0; i < 3; i++) addBuoy(G.x + (i - 1) * 0.6, -40 - i * 9);   // a reward in the first seconds
 }
