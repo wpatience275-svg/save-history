@@ -1015,6 +1015,8 @@ Platform.load().then(saved => {
   applyShip(Meta.SHIPS.some(x => x.id === progress.ship) ? progress.ship : 'titanic');
   buildMenu(); renderMeta(); renderLive(); applyAudio(); hideLoading(); Platform.gameReady();
   setTimeout(() => { if (progress.voyages > 0 && $('menu').classList.contains('on') && !G) openDaily(true); }, 1300);
+  // draw the Shipyard pictures one at a time while the menu is idle, so opening the Shipyard never stalls
+  Meta.SHIPS.forEach((sh, i) => setTimeout(() => { if (!G) W.shipThumb(sh.id); }, 2500 + i * 500));
 });
 window.READY = true;
 window.__game = { startLevel, get G() { return G; }, progress, collect: id => collectPower(G.level.fixes.find(f => f.id === id)), hit: () => hitShip({ x: G.x, z: SHIP_Z - 13, hit: false }) };
