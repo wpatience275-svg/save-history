@@ -348,6 +348,7 @@ function spawnBoat() {
 // ---------------- spawning ----------------
 function addBerg(x, z, size = 1) {
   const k = Math.floor(Math.random() * 4), r0 = [1.6, 2.0, 1.3, 1.8][k];
+  if (size < 2) x = THREE.MathUtils.clamp(x, -(LANE - 1), LANE - 1);   // obstacles always sit inside the lane, never half-hidden in the edge ice
   const s = (0.95 + Math.random() * 0.45) * size, mesh = W.makeIceberg(k);
   mesh.scale.setScalar(s); mesh.position.set(x, 0, z); mesh.rotation.y = Math.random() * 6;
   const b = { mesh, r: r0 * s * 0.72, x, z, warned: false, hit: false, phase: Math.random() * 6, vx: (prog() > 0.35 && size <= 1 && Math.random() < 0.3) ? (Math.random() < .5 ? -1 : 1) * (1 + Math.random() * 1.5) : 0 };
@@ -368,7 +369,7 @@ function spawnWave() {
     for (let i = 0; i < 2 + Math.floor(p * 2); i++) addBerg((Math.random() - 0.5) * 2 * (LANE + 2), SPAWN_Z - i * 12, 1.3);
   } else if (pick < 0.6) {                             // a wall with one gap
     const gap = (Math.random() - 0.5) * 2 * (LANE - 3), width = 10.5 - p * 2;
-    for (let x = -LANE - 3; x <= LANE + 3; x += 4.2) if (Math.abs(x - gap) > width / 2 + 1.5) addBerg(x, SPAWN_Z + (Math.random() - 0.5) * 3, 0.9);
+    for (let x = -LANE + 1; x <= LANE - 1; x += 4.4) if (Math.abs(x - gap) > width / 2 + 1.5) addBerg(x, SPAWN_Z + (Math.random() - 0.5) * 3, 0.9);
     addBuoy(gap, SPAWN_Z);
   } else if (pick < 0.85) {                            // zigzag channel
     for (let i = 0; i < 4; i++) addBerg((i % 2 ? 1 : -1) * (4 + Math.random() * 6), SPAWN_Z - i * 20, 1.25);
@@ -817,7 +818,11 @@ function tick(dt) {
     const want = G.wheel * 14.5 * sp.steer * rud;                 // sideways speed the rudder asks for
     G.vx += (want - G.vx) * Math.min(1, 2.4 * rud * dt);        // a heavy ship answers slowly
     G.x += (G.vx + (playing && G.sea.drift ? Math.sin(G.t * 0.35) * G.sea.drift : 0)) * dt;
-    if (Math.abs(G.x) > LANE + 2) { G.x = Math.sign(G.x) * (LANE + 2); G.vx *= -0.3; }
+    // the lane ends at the pack ice: the ship is eased back instead of bouncing off an invisible wall
+    const lim = LANE + 0.5, over = Math.abs(G.x) - lim, sx = Math.sign(G.x);
+    if (over > 0) { if (G.vx * sx > 0) G.vx *= Math.max(0, 1 - dt * 9); G.x -= sx * over * Math.min(1, dt * 6); if (Math.abs(G.x) > lim + 1) G.x = sx * (lim + 1); }
+    const near = playing ? THREE.MathUtils.clamp((Math.abs(G.x) - (lim - 2.5)) / 2.5, 0, 1) : 0;
+    if (near !== G.shownEdge) { G.shownEdge = near; $('edgeL').style.opacity = sx < 0 ? near : 0; $('edgeR').style.opacity = sx > 0 ? near : 0; }
     const kdir = (keys.r ? 1 : 0) - (keys.l ? 1 : 0);
     if (kdir) setWheel(G.wheel + kdir * dt * 4);                                         // keys: hold to turn
     else if (!wheelDrag && !swipe && G.wheel) { G.wheel *= Math.exp(-dt * 6); if (Math.abs(G.wheel) < 0.01) G.wheel = 0; drawWheel(); }   // let go: the wheel springs back
@@ -882,12 +887,13 @@ function tick(dt) {
   // warning beacons follow their icebergs
   G.bergs.forEach(b => { if (b.beacon) b.beacon.visible = !!G.active.warning; });
   // scenery: a field of big icebergs either side of the shipping lane (no collision)
+  const deco = (x, sc, z = SPAWN_Z - Math.random() * 6) => { const d = W.makeIceberg(Math.floor(Math.random() * 4)); d.children.filter(c => c.material.transparent).forEach(c => d.remove(c)); d.scale.setScalar(sc); d.position.set(x, 0, z); d.rotation.y = Math.random() * 6; G.deco.push(d); };
   G.nextDeco -= dt * (flow / BASE_SPEED);
-  if (G.nextDeco <= 0) {
-    G.nextDeco = 0.35 + Math.random() * 0.3;
-    const side = Math.random() < .5 ? -1 : 1, d = W.makeIceberg(Math.floor(Math.random() * 4));
-    d.scale.setScalar(1.6 + Math.random() * 2.6); d.position.set(side * (LANE + 9 + Math.random() * 34), 0, SPAWN_Z - Math.random() * 20); d.rotation.y = Math.random() * 6; G.deco.push(d);
-  }
+  if (G.nextDeco <= 0) { G.nextDeco = 0.8 + Math.random() * 0.5; deco((Math.random() < .5 ? -1 : 1) * (LANE + 20 + Math.random() * 30), 2 + Math.random() * 2.6); }
+  // a solid wall of pack ice on both edges, so the limit of the lane is something you can see
+  if (!G.shelfInit) { G.shelfInit = true; for (let z = SPAWN_Z + 11; z < 50; z += 11) [-1, 1].forEach(sd => deco(sd * (LANE + 8.5 + Math.random() * 1.5), 2.9 + Math.random() * 0.9, z)); }
+  G.shelfD = (G.shelfD || 0) - flow * dt;
+  if (G.shelfD <= 0) { G.shelfD = 11; [-1, 1].forEach(sd => deco(sd * (LANE + 8.5 + Math.random() * 1.5), 2.9 + Math.random() * 0.9)); }
   G.deco = G.deco.filter(d => { d.position.z += flow * dt; if (d.position.z > 70) { scene.remove(d); return false; } return true; });
   // forget things far behind
   G.bergs = G.bergs.filter(b => { if (b.z > 60) { scene.remove(b.mesh); return false; } return true; });
