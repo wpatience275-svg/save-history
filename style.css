@@ -483,3 +483,8 @@ body.lite .glass, body.lite .lvl, body.lite .card { -webkit-backdrop-filter: non
 body.lite .glass { background: rgba(10, 20, 44, .78) !important; }
 body.lite #wheel, body.lite #wheelBox.grab #wheel, body.lite #wheelBox.hard #wheel, body.lite #dragHint, body.lite .sea-ico { filter: none !important; }
 body.lite #seaCard::after { display: none; }
+
+/* lane edge warning */
+.edgeSide { position: absolute; top: 0; bottom: 0; width: 16cqw; pointer-events: none; opacity: 0; }
+#edgeL { left: 0; background: linear-gradient(90deg, rgba(120,220,255,.55), transparent); }
+#edgeR { right: 0; background: linear-gradient(270deg, rgba(120,220,255,.55), transparent); }
