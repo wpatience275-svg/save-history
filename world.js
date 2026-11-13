@@ -5,12 +5,16 @@ import { BUILDERS } from './ships.js';
 export { THREE };
 
 export function createWorld(container) {
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+// Quality tiers: phones start on "mid"; any device that cannot hold a smooth frame rate steps down by itself.
+const isPhone = matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+let tier = isPhone ? 'mid' : 'high';
+const PR = { high: Math.min(devicePixelRatio, 1.5), mid: Math.min(devicePixelRatio, 1.15), low: 0.85 };
+const renderer = new THREE.WebGLRenderer({ antialias: !isPhone, powerPreference: 'high-performance' });
+renderer.setPixelRatio(PR[tier]);
 
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.35;
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = tier === 'high';
 container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -81,7 +85,7 @@ function waterNormals() {
   const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
 }
 const water = new Water(new THREE.PlaneGeometry(2000, 2000), {
-  textureWidth: 512, textureHeight: 512, waterNormals: waterNormals(),
+  textureWidth: isPhone ? 256 : 512, textureHeight: isPhone ? 256 : 512, waterNormals: waterNormals(),
   sunDirection: moonDir.clone(), sunColor: 0xdbe8ff, waterColor: 0x0b3554, distortionScale: 3.2, fog: true
 });
 water.rotation.x = -Math.PI / 2;
@@ -296,18 +300,47 @@ function buildTitanic() {
   ship.userData.mats = { hull: black, buff, dark, white };
   return ship;
 }
+function applyTierTo(root) { root.traverse(o => { if (o.isPointLight) o.visible = tier === 'high'; }); }
 // the ship on the water is a wrapper; the Shipyard swaps the model inside it
 const ship = new THREE.Group();
 ship.position.set(0, -0.05, 10);
 scene.add(ship);
 const shipKit = { hullTexture, deckTexture, textTexture };
 const buildModel = id => (id && BUILDERS[id]) ? BUILDERS[id](shipKit) : buildTitanic();
+function mergeStatic(root, keep) {
+  root.updateMatrixWorld(true);
+  const inv = new THREE.Matrix4().copy(root.matrixWorld).invert(), groups = new Map(), gone = [];
+  const skip = o => { for (let p = o; p && p !== root; p = p.parent) if (keep.has(p)) return true; return false; };
+  root.traverse(o => {
+    if (!o.isMesh || o.isInstancedMesh || o.isSprite || skip(o) || Array.isArray(o.material) || o.material.transparent) return;
+    let g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    g.applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, o.matrixWorld));
+    if (!g.attributes.normal) g.computeVertexNormals();
+    const n = g.attributes.position.count, uv = g.attributes.uv ? g.attributes.uv.array : new Float32Array(n * 2);
+    const m = o.material, named = Object.values(root.userData.mats || {}).includes(m);   // liveried materials stay their own group
+    const key = named ? m.uuid : [m.type, m.color && m.color.getHex(), m.roughness, m.metalness, m.map && m.map.uuid, m.emissive && m.emissive.getHex(), m.emissiveIntensity, m.side].join('|');
+    const e = groups.get(key) || { mat: m, pos: [], nor: [], uv: [], n: 0 };
+    e.pos.push(g.attributes.position.array); e.nor.push(g.attributes.normal.array); e.uv.push(uv); e.n += n; groups.set(key, e); gone.push(o);
+  });
+  gone.forEach(o => o.parent.remove(o));
+  const cat = (list, size, n) => { const out = new Float32Array(n * size); let k = 0; list.forEach(a => { out.set(a, k); k += a.length; }); return out; };
+  groups.forEach(e => { const mat = e.mat;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(cat(e.pos, 3, e.n), 3)); g.setAttribute('normal', new THREE.BufferAttribute(cat(e.nor, 3, e.n), 3)); g.setAttribute('uv', new THREE.BufferAttribute(cat(e.uv, 2, e.n), 2));
+    const m = new THREE.Mesh(g, mat); m.castShadow = m.receiveShadow = true; root.add(m);
+  });
+}
 let model = null;
 function setShipModel(id) {
   if (model) { ship.remove(model); model.traverse(o => { if (o.geometry) o.geometry.dispose(); }); }
-  model = buildModel(id); ship.add(model);
+  model = buildModel(id);
+  // funnels become empty markers (the smoke only needs their position); the flag and radar stay separate so they can move
+  const marks = (model.userData.funnels || []).map(f => { const o = new THREE.Object3D(); f.updateMatrixWorld(true); o.position.copy(f.position); o.rotation.copy(f.rotation); return o; });
+  mergeStatic(model, new Set([model.userData.flag, model.userData.spin].filter(Boolean)));
+  marks.forEach(o => model.add(o)); model.userData.funnels = marks; model.userData.people = new THREE.Group();
+  ship.add(model);
   Object.assign(ship.userData, model.userData); ship.userData.spin = model.userData.spin || null;
-  model.traverse(o => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; } });
+  applyTierTo(model);
 }
 setShipModel('titanic');
 // small studio renders of each ship for the Shipyard cards
@@ -329,7 +362,7 @@ function shipThumb(id) {
 // ---------- icebergs ----------
 const icebergMaterial = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.38, clearcoat: 0.6, clearcoatRoughness: 0.25, flatShading: true, emissive: 0x2a7fa0, emissiveIntensity: 0.25 });
 function iceberg(seed, r) {
-  const g = new THREE.IcosahedronGeometry(r, 4).toNonIndexed ? new THREE.IcosahedronGeometry(r, 4) : null;
+  const g = new THREE.IcosahedronGeometry(r, 3);
   const p = g.attributes.position, v = new THREE.Vector3();
   const hash = (x, y, z) => { const q = Math.sin(x * 127.1 + y * 311.7 + z * 74.7 + seed * 19.3) * 43758.5453; return q - Math.floor(q); };
   const noise = (x, y, z) => { // smooth value noise
@@ -363,45 +396,47 @@ function iceberg(seed, r) {
   const mat = icebergMaterial;
   const mesh = new THREE.Mesh(g, mat); mesh.castShadow = mesh.receiveShadow = true;
   // the much bigger part hidden under the water
-  const ghost = new THREE.Mesh(new THREE.IcosahedronGeometry(r * 1.7, 2), new THREE.MeshBasicMaterial({ color: 0x3fb8cc, transparent: true, opacity: 0.16, depthWrite: false }));
+  const ghost = new THREE.Mesh(new THREE.IcosahedronGeometry(r * 1.7, 1), new THREE.MeshBasicMaterial({ color: 0x3fb8cc, transparent: true, opacity: 0.16, depthWrite: false }));
   ghost.scale.y = 0.35; ghost.position.y = -0.6;
   // foam ring at the waterline
-  const foam = new THREE.Mesh(new THREE.RingGeometry(r * 0.85, r * 1.25, 48), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false }));
+  const foam = new THREE.Mesh(new THREE.RingGeometry(r * 0.85, r * 1.25, 24), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35, depthWrite: false }));
   foam.rotation.x = -Math.PI / 2; foam.position.y = 0.06;
   const grp = new THREE.Group(); grp.add(ghost, mesh, foam); return grp;
 }
 // ---------- loose ice drifting on the water ----------
 const growlers = [];
 for (let i = 0; i < 70; i++) {
-  const gm = new THREE.Mesh(new THREE.DodecahedronGeometry(0.15 + Math.random() * 0.35, 0), new THREE.MeshStandardMaterial({ color: 0xe8f6ff, roughness: 0.4, flatShading: true }));
-  gm.position.set((Math.random() - 0.5) * 70, 0.02, -140 + Math.random() * 170); gm.scale.y = 0.45; gm.rotation.y = Math.random() * 6;
-  gm.userData.ph = Math.random() * 6; scene.add(gm); growlers.push(gm);
+  const gm = new THREE.Object3D(), sc = 0.5 + Math.random() * 1.2;
+  gm.position.set((Math.random() - 0.5) * 70, 0.02, -140 + Math.random() * 170); gm.scale.set(sc, sc * 0.45, sc); gm.rotation.y = Math.random() * 6;
+  gm.userData.ph = Math.random() * 6; growlers.push(gm);
 }
+const growlerMesh = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(0.3, 0), new THREE.MeshStandardMaterial({ color: 0xe8f6ff, roughness: 0.4, flatShading: true }), growlers.length);
+growlerMesh.frustumCulled = false; scene.add(growlerMesh);
 
 // ---------- wake and bow wave foam ----------
 const foamPts = 900, foamPos = new Float32Array(foamPts * 3), foamLife = new Float32Array(foamPts);
 for (let i = 0; i < foamPts; i++) foamLife[i] = Math.random();
 const foamGeo = new THREE.BufferGeometry(); foamGeo.setAttribute('position', new THREE.BufferAttribute(foamPos, 3));
-const foamMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.35, transparent: true, opacity: 0.5, depthWrite: false }); scene.add(new THREE.Points(foamGeo, foamMat));
+const foamMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.35, transparent: true, opacity: 0.5, depthWrite: false }); const foamPoints = new THREE.Points(foamGeo, foamMat); scene.add(foamPoints);
 
 // ---------- smoke and snow ----------
 const puffTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'); const g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
 foamMat.map = puffTex; foamMat.needsUpdate = true;
 const smoke = [];
-for (let i = 0; i < 60; i++) {
+for (let i = 0; i < (isPhone ? 24 : 60); i++) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, color: 0x9aa0aa, transparent: true, depthWrite: false }));
   s.userData = { f: i % 3, life: Math.random() }; scene.add(s); smoke.push(s);
 }
-const snowN = 1200, snowPos = new Float32Array(snowN * 3);
+const snowN = isPhone ? 500 : 1200, snowPos = new Float32Array(snowN * 3);
 for (let i = 0; i < snowN; i++) snowPos.set([(Math.random() - .5) * 120, Math.random() * 50, (Math.random() - .5) * 120], i * 3);
 const snowGeo = new THREE.BufferGeometry(); snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
-scene.add(new THREE.Points(snowGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.18, transparent: true, opacity: 0.75, map: puffTex, depthWrite: false })));
+const snowPoints = new THREE.Points(snowGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.18, transparent: true, opacity: 0.75, map: puffTex, depthWrite: false })); scene.add(snowPoints);
 
 function update(t) {
   water.material.uniforms.time.value = t * 0.6;
   ship.position.y = -0.05 + Math.sin(t * 0.8) * 0.05;
   ship.rotation.z = Math.sin(t * 0.6) * 0.012;
-  growlers.forEach(gm => { gm.position.y = Math.sin(t + gm.userData.ph) * 0.03; });
+  growlers.forEach((gm, i) => { gm.position.y = Math.sin(t + gm.userData.ph) * 0.03; gm.updateMatrix(); growlerMesh.setMatrixAt(i, gm.matrix); }); growlerMesh.instanceMatrix.needsUpdate = true;
   if (ship.userData.spin) ship.userData.spin.rotation.y = t * 2.5;
   (ship.userData.people ? ship.userData.people.children : []).forEach(pp => { pp.position.z += pp.userData.speed * 0.016; if (pp.position.z < pp.userData.z0 || pp.position.z > pp.userData.z1) pp.userData.speed *= -1; });
   const fl = ship.userData.flag.geometry.attributes.position; for (let i = 0; i < fl.count; i++) fl.setZ(i, Math.sin(t * 6 + fl.getX(i) * 9) * 0.04 * (fl.getX(i) + 0.25)); fl.needsUpdate = true;
@@ -435,12 +470,24 @@ function update(t) {
   }
   addEventListener('resize', resize); resize();
 
-  // quality switch: the game drops to "low" by itself if the device struggles
   function setQuality(q) {
-    renderer.setPixelRatio(q === 'low' ? 1 : Math.min(devicePixelRatio, 1.5));
-    renderer.shadowMap.enabled = q !== 'low';
-    scene.traverse(o => { if (o.material) o.material.needsUpdate = true; });
+    if (!PR[q] || q === tier) return;
+    tier = q; renderer.setPixelRatio(PR[q]); renderer.shadowMap.enabled = q === 'high';
+    icebergMaterial.clearcoat = q === 'high' ? 0.6 : 0;
+    applyTierTo(scene);
+    scene.traverse(o => { if (o.material && o.material.isMaterial) o.material.needsUpdate = true; });
     resize();
   }
-  return { THREE, renderer, scene, camera, water, ship, makeIceberg, update, puffTex, growlers, icebergMaterial, setQuality, setShipModel, shipThumb };
+  icebergMaterial.clearcoat = tier === 'high' ? 0.6 : 0;
+  // the ocean's mirror pass draws the whole world a second time: skip small things in it, and refresh it less often on weaker tiers
+  const mirrorHide = [growlerMesh, foamPoints, snowPoints, ...smoke];
+  const mirror = water.onBeforeRender.bind(water); let mirrorFrame = 0;
+  water.onBeforeRender = function (r, sc, cam) {
+    const every = tier === 'high' ? 1 : tier === 'mid' ? 2 : 6;
+    if (mirrorFrame++ % every) return;
+    mirrorHide.forEach(o => { o.userData.v = o.visible; o.visible = false; });
+    mirror(r, sc, cam);
+    mirrorHide.forEach(o => { o.visible = o.userData.v; });
+  };
+  return { THREE, renderer, scene, camera, water, ship, makeIceberg, update, puffTex, growlers, icebergMaterial, setQuality, setShipModel, shipThumb, isPhone, tier: () => tier };
 }
