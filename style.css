@@ -474,3 +474,12 @@ html, body { margin: 0; height: 100%; background: #020611; overflow: hidden; tou
 #wheelBox.grab #wheel { transform: scale(1.06); filter: drop-shadow(0 0 3cqw rgba(255,200,90,.7)) drop-shadow(0 2cqw 2cqw rgba(0,0,0,.55)); cursor: grabbing; }
 #wheelBox.hard #wheel { filter: drop-shadow(0 0 3cqw rgba(255,90,90,.8)) drop-shadow(0 2cqw 2cqw rgba(0,0,0,.55)); }
 #stage, #hud { touch-action: none; -webkit-user-select: none; user-select: none; }
+
+/* ---------- performance ---------- */
+#timeFill { transform-origin: 0 50%; transition: none !important; will-change: transform; }
+#world canvas { will-change: transform; }
+/* phones: blur-behind and SVG drop-shadows are repainted over the 3D canvas every frame, so they go */
+body.lite .glass, body.lite .lvl, body.lite .card { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+body.lite .glass { background: rgba(10, 20, 44, .78) !important; }
+body.lite #wheel, body.lite #wheelBox.grab #wheel, body.lite #wheelBox.hard #wheel, body.lite #dragHint, body.lite .sea-ico { filter: none !important; }
+body.lite #seaCard::after { display: none; }
