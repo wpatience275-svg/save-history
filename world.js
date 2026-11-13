@@ -343,17 +343,27 @@ function setShipModel(id) {
   applyTierTo(model);
 }
 setShipModel('titanic');
-// small studio renders of each ship for the Shipyard cards
-let thumbR = null; const thumbCache = {};
+// small studio renders of each ship for the Shipyard cards.
+// Drawn with the game's own renderer into an off-screen target: a second WebGL context can make phones drop the first one and freeze the game.
+const thumbCache = {}; let thumbRT = null, thumbCv = null;
 function shipThumb(id) {
-  if (thumbCache[id]) return thumbCache[id];
+  if (thumbCache[id] !== undefined) return thumbCache[id];
+  const TW = 360, TH = 200;
   try {
-    if (!thumbR) { thumbR = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true }); thumbR.setSize(360, 200); thumbR.toneMapping = THREE.ACESFilmicToneMapping; thumbR.toneMappingExposure = 1.25; }
+    thumbRT = thumbRT || new THREE.WebGLRenderTarget(TW, TH);
     const sc = new THREE.Scene(); sc.add(new THREE.HemisphereLight(0xcfe3ff, 0x223044, 1.6));
     const d = new THREE.DirectionalLight(0xffffff, 2.2); d.position.set(-10, 14, -6); sc.add(d);
-    const m = buildModel(id); m.userData.people && m.remove(m.userData.people); sc.add(m);
-    const cam = new THREE.PerspectiveCamera(30, 360 / 200, 0.5, 200); cam.position.set(-24, 9, -17); cam.lookAt(0, 1.6, 1);
-    thumbR.render(sc, cam); thumbCache[id] = thumbR.domElement.toDataURL('image/png');
+    const m = buildModel(id); sc.add(m);
+    const cam = new THREE.PerspectiveCamera(30, TW / TH, 0.5, 200); cam.position.set(-24, 9, -17); cam.lookAt(0, 1.6, 1);
+    const prevRT = renderer.getRenderTarget(), prevA = renderer.getClearAlpha(), prevSh = renderer.shadowMap.enabled;
+    renderer.shadowMap.enabled = false; renderer.setRenderTarget(thumbRT); renderer.setClearAlpha(0); renderer.clear(); renderer.render(sc, cam);
+    const px = new Uint8Array(TW * TH * 4); renderer.readRenderTargetPixels(thumbRT, 0, 0, TW, TH, px);
+    renderer.setRenderTarget(prevRT); renderer.setClearAlpha(prevA); renderer.shadowMap.enabled = prevSh;
+    thumbCv = thumbCv || Object.assign(document.createElement('canvas'), { width: TW, height: TH });
+    const ctx = thumbCv.getContext('2d'), img = ctx.createImageData(TW, TH), lut = new Uint8Array(256);
+    for (let i = 0; i < 256; i++) lut[i] = Math.min(255, Math.pow(Math.min(1, i / 255 * 1.5), 1 / 2.2) * 255);   // linear -> sRGB with a little lift
+    for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) { const si = ((TH - 1 - y) * TW + x) * 4, di = (y * TW + x) * 4; img.data[di] = lut[px[si]]; img.data[di + 1] = lut[px[si + 1]]; img.data[di + 2] = lut[px[si + 2]]; img.data[di + 3] = px[si + 3]; }
+    ctx.putImageData(img, 0, 0); thumbCache[id] = thumbCv.toDataURL('image/png');
     m.traverse(o => { if (o.geometry) o.geometry.dispose(); });
   } catch (e) { thumbCache[id] = ''; }
   return thumbCache[id];
