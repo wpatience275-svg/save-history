@@ -122,7 +122,7 @@ function renderSettings() {
 }
 $('gearBtn').onclick = () => { Sfx.resume(); Sfx.tap(); renderSettings(); $('settings').classList.remove('hidden'); };
 document.querySelectorAll('.tgl').forEach(b => b.onclick = () => { progress.settings[b.dataset.k] = !progress.settings[b.dataset.k]; renderSettings(); applyAudio(); Sfx.tap(); Platform.save(progress); });
-$('gfxBtn').onclick = () => { const o = ['auto', 'high', 'low']; progress.settings.gfx = o[(o.indexOf(progress.settings.gfx || 'auto') + 1) % 3]; W.setQuality(progress.settings.gfx === 'low' ? 'low' : 'high'); renderSettings(); Sfx.tap(); Platform.save(progress); };
+$('gfxBtn').onclick = () => { const o = ['auto', 'high', 'low']; progress.settings.gfx = o[(o.indexOf(progress.settings.gfx || 'auto') + 1) % 3]; W.setQuality(progress.settings.gfx === 'low' ? 'low' : progress.settings.gfx === 'high' ? 'high' : (W.isPhone ? 'mid' : 'high')); renderSettings(); Sfx.tap(); Platform.save(progress); };
 $('setClose').onclick = () => { Sfx.tap(); $('settings').classList.add('hidden'); };
 
 function kick() { if (progress.settings.shake === false) return; stage.classList.remove('kick'); void stage.offsetWidth; stage.classList.add('kick'); }
@@ -179,7 +179,7 @@ function startLevel(index, forceTutorial = false, endless = false) {
     index, level, state: 'intro', t: 0, nextWave: 0.4, deco: [], nextDeco: 0, lifebuoys: 0, waveCount: 0, finaleDone: false,
     x: 0, vx: 0, wheel: 0, throttle: 1, boats: [], hornCd: 0, nextBoat: 0, score: 0, combo: 1, comboTimer: 0, flooded: 0,
     bergs: [], buoys: [], powers: [], active: {}, shield: null, sink: 0, lastSec: -1, nextPower: 2.5, firstPower: true,
-    endless, leg: 1, dist: 0, sea: Meta.todaysSea(), hitStop: 0, stats: { close: 0, buoys: 0, fullTime: 0, boats: 0, fixes: 0, maxCombo: 1, inches: 0, minThrottle: 1 }, slow: 0, usedChance: false, doneNow: [], fpsN: 0, fpsT: 0
+    endless, leg: 1, dist: 0, sea: Meta.todaysSea(), hitStop: 0, stats: { close: 0, buoys: 0, fullTime: 0, boats: 0, fixes: 0, maxCombo: 1, inches: 0, minThrottle: 1 }, slow: 0, usedChance: false, doneNow: [], fpsN: 0, fpsT: 0, slowWin: 0, shownScore: -1
   };
   ['menu', 'result'].forEach(id => { $(id).classList.add('hidden'); $(id).classList.remove('on'); });
   $('hud').classList.remove('hidden');
@@ -187,7 +187,7 @@ function startLevel(index, forceTutorial = false, endless = false) {
   $('cells').innerHTML = Array.from({ length: n }, (_, k) => `<rect class="cell ${k === n - 1 ? 'last' : ''}" x="${34 + k * cw + 2}" y="14" width="${cw - 4}" height="32" rx="4"/>`).join('');
   $('chips').innerHTML = ''; $('edge').classList.remove('on'); $('fixCard').classList.remove('show');
   $('score').textContent = '0'; $('combo').textContent = ''; $('buoyCount').textContent = '🛟 0/5';
-  $('timeNum').textContent = endless ? '0' : level.duration; $('timer').querySelector('.unit').textContent = endless ? 'METRES' : 'SEC'; $('timeFill').style.width = endless ? '0%' : '100%'; $('timer').classList.remove('danger');
+  $('timeNum').textContent = endless ? '0' : level.duration; $('timer').querySelector('.unit').textContent = endless ? 'METRES' : 'SEC'; $('timeFill').style.width = '100%'; $('timeFill').style.transform = `scaleX(${endless ? 0 : 1})`; $('timer').classList.remove('danger');
   setThrottle(1); drawWheel(); $('horn').classList.remove('show', 'ready');
   $('introWhen').textContent = level.when; $('introWhat').textContent = endless ? '♾️ ENDLESS VOYAGE' : '37 SECONDS'; $('introHow').textContent = TEXTS.steerHint;
   $('intro').classList.remove('hidden'); $('dragHint').classList.remove('hidden');
@@ -481,7 +481,7 @@ function showFix(fix, first) {
 // ---------------- scoring & feedback ----------------
 function addScore(pts, label, color, at) {
   const v = Math.round(pts * G.combo * engine(Math.round(G.throttle * 2) / 2).mult * (G.sea.scoreMult || 1));
-  G.score += v; $('score').textContent = G.score;
+  G.score += v; if (G.score !== G.shownScore) { G.shownScore = G.score; $('score').textContent = G.score; }
   if (label) floatText(`${label} +${v}`, color, at);
 }
 function bumpCombo() {
@@ -772,7 +772,8 @@ function tick(dt) {
   if (playing) {
     if (G.throttle >= 1) G.stats.fullTime += dt;
     G.stats.minThrottle = Math.min(G.stats.minThrottle, G.throttle);
-    if (G.fpsT < 4) { G.fpsT += realDt; G.fpsN++; if (G.fpsT >= 4 && progress.settings.gfx === 'auto' && G.fpsN / G.fpsT < 38) W.setQuality('low'); }
+    G.fpsT += realDt; G.fpsN++;   // watch the frame rate all voyage long and step the quality down when it dips
+    if (G.fpsT >= 2) { const fps = G.fpsN / G.fpsT; G.fpsT = G.fpsN = 0; if ((progress.settings.gfx || 'auto') === 'auto' && fps < 42 && ++G.slowWin >= 2) { G.slowWin = 0; W.setQuality(W.tier() === 'high' ? 'mid' : 'low'); } else if (fps >= 42) G.slowWin = 0; }
     if (G.flooded > 0 && Math.random() < G.flooded * 0.25) {     // steam and spray venting from the damaged bow
       const s = new THREE.Sprite(sprayMat.clone()); const side = Math.random() < .5 ? -1 : 1;
       s.position.set(G.x + side * 1.7, 0.6, SHIP_Z - HALF_LEN + 3 + Math.random() * 6); s.scale.setScalar(0.8);
@@ -787,15 +788,15 @@ function tick(dt) {
     const total = G.level.duration, left = G.endless ? 999 : Math.max(0, total - G.t), sec = Math.ceil(left);
     if (G.endless) {
       G.dist += dt * 11.3 * (1 + Math.min(0.8, G.t / 160)) * (0.4 + 0.6 * G.throttle);   // 22 knots ≈ 11.3 m/s
-      $('timeNum').textContent = Math.floor(G.dist);
-      const legT = 30, into = G.t - (G.leg - 1) * legT; $('timeFill').style.width = (into / legT * 100) + '%';
+      { const dm = Math.floor(G.dist); if (dm !== G.shownSec) { G.shownSec = dm; $('timeNum').textContent = dm; } }
+      const legT = 30, into = G.t - (G.leg - 1) * legT; $('timeFill').style.transform = `scaleX(${Math.min(1, into / legT)})`;
       if (into >= legT) {   // every 30 s: a new leg — faster sea, a big iceberg, a bonus
         G.leg++; Sfx.bell(2); addScore(100 * G.leg, `⚡ LEG ${G.leg} — FASTER!`, '#ffd36b'); kick();
         const w = $('warning'); w.textContent = `LEG ${G.leg}`; w.classList.remove('on'); void w.offsetWidth; w.classList.add('on');
         addBerg(G.x, SPAWN_Z + 10, 2.0); addBuoy(G.x + (G.x > 0 ? -9 : 9), SPAWN_Z + 10);
       }
     } else {
-    $('timeFill').style.width = (left / total * 100) + '%'; $('timeNum').textContent = sec;
+    if (sec !== G.shownSec) { G.shownSec = sec; $('timeNum').textContent = sec; } $('timeFill').style.transform = `scaleX(${left / total})`;
     $('timer').classList.toggle('danger', left <= 5); $('edge').classList.toggle('on', left <= 5);
     }
     if (!G.endless && sec !== G.lastSec) { G.lastSec = sec; if (sec <= 5 && sec > 0) { Sfx.heartbeat(); const bc = $('bigCount'); bc.textContent = sec; bc.classList.remove('go'); void bc.offsetWidth; bc.classList.add('go'); } }
@@ -924,7 +925,8 @@ function updateCamera(dt) {
 requestAnimationFrame(t => { frame(t); Platform.firstFrameReady(); });
 Platform.load().then(saved => {
   const s = saved || {}; Object.assign(progress, s, { settings: Object.assign({}, progress.settings, s.settings || {}) });
-  if (progress.settings.gfx === 'low') W.setQuality('low');
+  if (progress.settings.gfx === 'low') W.setQuality('low'); else if (progress.settings.gfx === 'high') W.setQuality('high');
+  document.body.classList.toggle('lite', W.isPhone);
   applyShip(Meta.SHIPS.some(x => x.id === progress.ship) ? progress.ship : 'titanic');
   buildMenu(); renderMeta(); renderLive(); applyAudio(); hideLoading(); Platform.gameReady();
   setTimeout(() => { if (progress.voyages > 0 && $('menu').classList.contains('on') && !G) openDaily(true); }, 1300);
