@@ -143,7 +143,7 @@ const TUTORIAL = [
   { target: 'wheelBox', title: 'STEER', text: 'Turn the wheel or swipe. Turn early — she is heavy!' },
   { target: 'lever', title: 'SPEED', text: 'UP = fast (×2 score). DOWN = slow and safe.' },
   { target: 'compBox', title: 'HULL', text: 'Each iceberg floods one. Five = she sinks.' },
-  { target: null, title: 'GRAB & DODGE', text: '🛟 Lifebuoys repair  •  ✨ Power-ups fix 1912  •  📯 Horn moves boats' }
+  { target: 'people', title: 'RESCUE 2,224', text: '🛶 Pick up boats  •  🚪 Choose a gate  •  🚀 Fill steam, then BOOST through the ice' }
 ];
 function runTutorial(done) {
   const t = $('tutorial'); t.classList.remove('hidden');
@@ -176,7 +176,7 @@ function startLevel(index, forceTutorial = false, endless = false) {
   cleanup(); confetti.id = (confetti.id || 0) + 1; const cc = $('confetti'); cc.getContext && cc.getContext('2d').clearRect(0, 0, cc.width, cc.height);
   const level = LEVELS[index];
   G = {
-    index, level, state: 'intro', t: 0, nextWave: 0.4, deco: [], nextDeco: 0, lifebuoys: 0, waveCount: 0, finaleDone: false,
+    index, level, state: 'intro', t: 0, nextWave: 0.4, people: 0, steam: 0, boost: 0, gates: [], rafts: [], nextGate: 3.5, nextRaft: 1.2, smashed: 0, deco: [], nextDeco: 0, lifebuoys: 0, waveCount: 0, finaleDone: false,
     x: 0, vx: 0, wheel: 0, throttle: 1, boats: [], hornCd: 0, nextBoat: 0, score: 0, combo: 1, comboTimer: 0, flooded: 0,
     bergs: [], buoys: [], powers: [], active: {}, shield: null, sink: 0, lastSec: -1, nextPower: 2.5, firstPower: true,
     endless, leg: 1, dist: 0, sea: Meta.todaysSea(), hitStop: 0, stats: { close: 0, buoys: 0, fullTime: 0, boats: 0, fixes: 0, maxCombo: 1, inches: 0, minThrottle: 1 }, slow: 0, usedChance: false, doneNow: [], fpsN: 0, fpsT: 0, slowWin: 0, shownScore: -1
@@ -186,6 +186,7 @@ function startLevel(index, forceTutorial = false, endless = false) {
   const n = level.lives + 1, cw = 132 / n;
   $('cells').innerHTML = Array.from({ length: n }, (_, k) => `<rect class="cell ${k === n - 1 ? 'last' : ''}" x="${34 + k * cw + 2}" y="14" width="${cw - 4}" height="32" rx="4"/>`).join('');
   $('chips').innerHTML = ''; $('edge').classList.remove('on'); $('fixCard').classList.remove('show');
+  $('peopleNum').textContent = '0'; $('peopleFill').style.transform = 'scaleX(0)'; setSteam(0); $('boostBtn').classList.remove('on');
   $('score').textContent = '0'; $('combo').textContent = ''; $('buoyCount').textContent = '🛟 0/5';
   $('timeNum').textContent = endless ? '0' : level.duration; $('timer').querySelector('.unit').textContent = endless ? 'METRES' : 'SEC'; $('timeFill').style.width = '100%'; $('timeFill').style.transform = `scaleX(${endless ? 0 : 1})`; $('timer').classList.remove('danger');
   setThrottle(1); drawWheel(); $('horn').classList.remove('show', 'ready');
@@ -232,7 +233,7 @@ function begin() {
 }
 function cleanup() {
   if (!G) return;
-  G.bergs.forEach(b => scene.remove(b.mesh)); G.deco.forEach(d => scene.remove(d)); G.buoys.forEach(b => scene.remove(b.mesh)); G.powers.forEach(p => scene.remove(p.mesh)); G.boats.forEach(b => scene.remove(b.mesh));
+  G.bergs.forEach(b => scene.remove(b.mesh)); G.deco.forEach(d => scene.remove(d)); G.gates.forEach(g => scene.remove(g.mesh)); G.rafts.forEach(r => scene.remove(r.mesh)); G.buoys.forEach(b => scene.remove(b.mesh)); G.powers.forEach(p => scene.remove(p.mesh)); G.boats.forEach(b => scene.remove(b.mesh));
   if (G.shield) ship.remove(G.shield);
   setBergGlow(0); scene.fog.density = BASE_FOG; W.ship.userData.spotBoost && (W.ship.userData.spotBoost.visible = false);
   G = null;
@@ -288,6 +289,7 @@ addEventListener('keydown', e => {
   if (e.key === 'ArrowUp' || e.key === 'w') { begin(); setThrottle(Math.min(1, G.throttle + 0.5)); }
   if (e.key === 'ArrowDown' || e.key === 's') { begin(); setThrottle(Math.max(0, G.throttle - 0.5)); }
   if (e.key === ' ') { begin(); horn(); }
+  if (e.key === 'Shift' || e.key === 'b') boost();
 });
 addEventListener('keyup', e => { if (e.key === 'ArrowLeft' || e.key === 'a') keys.l = false; if (e.key === 'ArrowRight' || e.key === 'd') keys.r = false; });
 
@@ -388,6 +390,64 @@ function spawnFinale() {
   const side = G.x > 0 ? -1 : 1;
   addBerg(G.x - side * 15, SPAWN_Z + 6, 1.1);
   addBuoy(G.x + side * 9, SPAWN_Z + 10);
+}
+
+// ---------------- rescue, gates and the steam boost ----------------
+const TOTAL_PEOPLE = 2224;
+function addPeople(n, at) {
+  const before = G.people; G.people = Math.max(0, Math.round(G.people + n)); if (!G.endless) G.people = Math.min(TOTAL_PEOPLE, G.people);
+  const d = G.people - before; if (!d) return;
+  $('peopleNum').textContent = G.people.toLocaleString(); $('peopleFill').style.transform = `scaleX(${Math.min(1, G.people / TOTAL_PEOPLE)})`;
+  const el = $('people'); el.classList.remove('bump', 'loss'); void el.offsetWidth; el.classList.add(d > 0 ? 'bump' : 'loss');
+  floatText(`${d > 0 ? '+' : ''}${d} 👥`, d > 0 ? '#7dffb0' : '#ff8a93', at);
+}
+function setSteam(v) {
+  if (!G) return; G.steam = THREE.MathUtils.clamp(v, 0, 100);
+  $('boostBtn').style.setProperty('--p', G.steam + '%'); $('boostBtn').classList.toggle('ready', G.steam >= 100 && G.boost <= 0);
+}
+function boost() {
+  if (!G || G.state !== 'play' || G.steam < 100 || G.boost > 0) return;
+  G.boost = 3.2; setSteam(0); $('boostBtn').classList.add('on'); Sfx.horn(); Sfx.whooshNear(); vibrate([30, 20, 60]); kick(); cam.shake = 0.3;
+  banner('FULL STEAM — SMASH THE ICE!', '#ffd36b');
+}
+$('boostBtn').addEventListener('pointerdown', e => { e.stopPropagation(); boost(); });
+// survivors in open boats, waiting to be picked up
+const raftGeo = (() => { const g = new THREE.CapsuleGeometry(0.55, 1.5, 3, 8); g.rotateX(Math.PI / 2); g.scale(1, 0.45, 1); return g; })();
+const raftMat = new THREE.MeshStandardMaterial({ color: 0xf2eee3, roughness: 0.6, emissive: 0x3a3020, emissiveIntensity: 0.6 });
+const raftGlow = new THREE.SpriteMaterial({ map: W.puffTex, color: 0x7dffb0, transparent: true, depthWrite: false, opacity: 0.85 });
+function addRaft(x, z) {
+  const m = new THREE.Group(), h = new THREE.Mesh(raftGeo, raftMat), gl = new THREE.Sprite(raftGlow); gl.scale.setScalar(3.2); gl.position.y = 1.1; m.add(h, gl);
+  m.position.set(x, 0.2, z); m.rotation.y = Math.random() * 6; scene.add(m); G.rafts.push({ mesh: m, x, z, n: 40 + Math.floor(Math.random() * 4) * 15 });
+}
+// gates: two choices side by side — you can only sail through one
+const GATES = [
+  { id: 'p80', txt: '+150 👥', col: '#1fbf6b', w: 5, run: at => addPeople(150, at) },
+  { id: 'p150', txt: '+300 👥', col: '#0e9a50', w: 3, run: at => addPeople(300, at) },
+  { id: 'x2', txt: '×2 👥', col: '#2a8cff', w: 3, run: at => addPeople(Math.max(120, G.people), at) },
+  { id: 'fix', txt: '🔧 REPAIR', col: '#ff9f1a', w: 2, ok: () => G.flooded > 0, run: () => { const c = $('cells').children[G.flooded - 1]; c.classList.remove('flooded'); c.classList.add('repaired'); G.flooded--; floatText('🔧 HULL REPAIRED!', '#36d67a'); Sfx.win(); } },
+  { id: 'steam', txt: '🚀 STEAM', col: '#b06cff', w: 3, ok: () => G.steam < 100 && G.boost <= 0, run: () => { setSteam(100); floatText('🚀 BOOST READY!', '#d9b3ff'); } },
+  { id: 'pts', txt: '+500 ⭐', col: '#e0a400', w: 3, run: at => addScore(300, '⭐', '#ffd36b', at) },
+  { id: 'bad', txt: '−40% 👥', col: '#d92b3a', w: 0, bad: true, run: at => { addPeople(-Math.ceil(G.people * 0.4), at); Sfx.bump(); } }
+];
+const gateTex = {};
+function gateTexture(g) {
+  if (gateTex[g.id]) return gateTex[g.id];
+  const c = document.createElement('canvas'); c.width = 512; c.height = 256; const x = c.getContext('2d');
+  const gr = x.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, g.col + 'ee'); gr.addColorStop(1, g.col + '55'); x.fillStyle = gr; x.fillRect(0, 0, 512, 256);
+  x.strokeStyle = 'rgba(255,255,255,.9)'; x.lineWidth = 14; x.strokeRect(7, 7, 498, 242);
+  x.font = '100px "Lilita One", sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineWidth = 12; x.strokeStyle = 'rgba(0,0,0,.55)'; x.strokeText(g.txt, 256, 134); x.fillStyle = '#fff'; x.fillText(g.txt, 256, 134);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return gateTex[g.id] = t;
+}
+const gatePost = new THREE.CylinderGeometry(0.22, 0.28, 6.4, 8), gatePane = new THREE.PlaneGeometry(11.8, 6.6), postMat = new THREE.MeshStandardMaterial({ color: 0xf4f1ea, emissive: 0x555555 });
+function spawnGates() {
+  const pool = GATES.filter(g => g.w && (!g.ok || g.ok())), pick = ex => { const l = pool.filter(g => g !== ex); let r = Math.random() * l.reduce((a, g) => a + g.w, 0); return l.find(g => (r -= g.w) < 0) || l[0]; };
+  const a = pick(), b = Math.random() < 0.3 && G.people >= 100 ? GATES.find(g => g.bad) : pick(a), pair = Math.random() < .5 ? [a, b] : [b, a];
+  const m = new THREE.Group();
+  pair.forEach((g, i) => { const pn = new THREE.Mesh(gatePane, new THREE.MeshBasicMaterial({ map: gateTexture(g), transparent: true, opacity: 0.96, side: THREE.DoubleSide, depthWrite: false, fog: false, toneMapped: false })); pn.position.set((i ? 1 : -1) * 6.2, 4.1, 0); m.add(pn); });
+  [-12.2, 0, 12.2].forEach(px => { const p = new THREE.Mesh(gatePost, postMat); p.position.set(px, 3.2, 0); m.add(p); });
+  m.position.set(0, 0, SPAWN_Z); scene.add(m); G.gates.push({ mesh: m, z: SPAWN_Z, pair });
+  G.bergs.forEach(b => { if (b.z < SPAWN_Z + 26 && !b.hit) b.sinking = true; });   // keep the water in front of a gate clear
+  G.nextWave = Math.max(G.nextWave, 1.1);
 }
 
 // ---------------- power-ups that fix 1912's mistakes ----------------
@@ -529,6 +589,10 @@ function updateFx(dt) {
 function hitShip(b) {
   if (!G || G.state !== 'play') return;
   b.hit = true;
+  if (G.boost > 0) {   // full steam: the bow smashes straight through
+    G.smashed++; b.sinking = true; burst(b.x, b.z, true); cam.shake = 0.35; G.hitStop = 0.05; Sfx.crash(); vibrate(25); bumpCombo();
+    addScore(60, '💥 SMASH!', '#ffd36b', toScreen(new THREE.Vector3(b.x, 3, b.z))); return;
+  }
   if (G.shield) {   // sealed bulkheads absorb the blow
     ship.remove(G.shield); G.shield = null; removeChip('bulkhead');
     Sfx.place(); burst(b.x, b.z, true); if (b.mesh) b.sinking = true; cam.shake = 0.4;
@@ -624,7 +688,7 @@ function levelUp(rank) {
 function win() {
   if (!G || G.state === 'won' || G.state === 'lost') return;
   G.state = 'won'; const g = G;
-  const stars = G.flooded === 0 ? 3 : G.flooded <= 2 ? 2 : 1;
+  const stars = Math.max(1, Math.min(G.flooded === 0 ? 3 : G.flooded <= 2 ? 2 : 1, G.people >= 1500 ? 3 : G.people >= 700 ? 2 : 1));
   const id = G.level.id;
   const prevBest = progress.best[id] || 0;
   G.newBest = G.score > prevBest; progress.best[id] = Math.max(prevBest, G.score);
@@ -704,7 +768,7 @@ function showResult(won, stars) {
       <h1 class="win t-xl">${TEXTS.saved}</h1>
       <div class="starrow">${[0, 1, 2].map(i => `<div class="star ${i === 1 ? 'mid' : ''}" id="st${i}">${starSvg}</div>`).join('')}</div>
       ${scoreLine}
-      <div class="lives t-xs"><div class="ok">LIVES SAVED<b class="outline">2,224</b>everyone on board</div><div class="then">IN 1912<b class="outline">706</b>survived</div></div>
+      <div class="lives t-xs"><div class="ok">YOU RESCUED<b class="outline">${G.people.toLocaleString()}</b>of 2,224 people</div><div class="then">IN 1912<b class="outline">706</b>survived</div></div>
       ${vs}
       <div class="xpline t-s">+${G.xpGained} XP${G.seaDouble ? ' ×2' : ''}${G.doneNow.length ? ` • ✅ ${G.doneNow.length}` : ''}</div>
       ${nextShipLine()}
@@ -782,7 +846,7 @@ function tick(dt) {
     }
     if (Math.floor(G.stats.fullTime) % 5 === 0) checkMissions();
   }
-  const flow = (G.endless ? 1 + Math.min(0.8, G.t / 160) : 1) * (G.state === 'lost' || G.state === 'chance' ? 0.15 : G.state === 'won' ? 1.2 : G.state === 'intro' ? 0.35 : 1) * BASE_SPEED * sp.k;
+  const flow = (G.boost > 0 ? 1.7 : 1) * (G.endless ? 1 + Math.min(0.8, G.t / 160) : 1) * (G.state === 'lost' || G.state === 'chance' ? 0.15 : G.state === 'won' ? 1.2 : G.state === 'intro' ? 0.35 : 1) * BASE_SPEED * sp.k;
 
   if (playing) {
     G.t += dt;
@@ -801,6 +865,10 @@ function tick(dt) {
     $('timer').classList.toggle('danger', left <= 5); $('edge').classList.toggle('on', left <= 5);
     }
     if (!G.endless && sec !== G.lastSec) { G.lastSec = sec; if (sec <= 5 && sec > 0) { Sfx.heartbeat(); const bc = $('bigCount'); bc.textContent = sec; bc.classList.remove('go'); void bc.offsetWidth; bc.classList.add('go'); } }
+    // rescue boats, choice gates, steam
+    G.nextRaft -= dt; if (G.nextRaft <= 0 && left > 3) { G.nextRaft = 0.9 + Math.random() * 0.7; const rx = (Math.random() - 0.5) * 2 * (LANE - 2); addRaft(rx, SPAWN_Z); if (Math.random() < 0.35) addRaft(rx + (Math.random() < .5 ? -3 : 3), SPAWN_Z - 7); }
+    G.nextGate -= dt; if (G.nextGate <= 0 && left > G.level.finale + 4) { G.nextGate = 6.5 + Math.random() * 1.5; spawnGates(); }
+    if (G.boost > 0) { G.boost -= realDt; if (G.boost <= 0) { $('boostBtn').classList.remove('on'); setSteam(G.steam); } } else if (G.steam < 100) setSteam(G.steam + dt * 2.2);
     G.nextPower -= dt; if (G.nextPower <= 0 && left > 6) { spawnPower(); G.nextPower = 3.5 + Math.random() * 1.5; }
     tickPowers(dt);
     const p = prog(), gapT = (G.level.density[0] + (G.level.density[1] - G.level.density[0]) * p) * (G.sea.dens || 1);
@@ -845,7 +913,7 @@ function tick(dt) {
     const gap = Math.hypot(dx, dz) - b.r;
     if (gap < 0 && !b.hit) hitShip(b);
     else if (!b.hit && !b.inched && gap < 0.9 && b.z > bowZ + 2) {
-      b.inched = true; G.slow = 0.7; G.stats.inches++; Sfx.whooshNear(); vibrate(30);
+      b.inched = true; setSteam(G.steam + 18); G.slow = 0.7; G.stats.inches++; Sfx.whooshNear(); vibrate(30);
       addScore(50 * (G.sea.closeMult || 1), '😱 INCHES AWAY!', '#4be0ff', toScreen(new THREE.Vector3(b.x, 4, b.z))); checkMissions();
     }
     else if (!b.hit && !b.warned && gap < SETTINGS.nearMiss && b.z > bowZ + 2) {
@@ -853,12 +921,23 @@ function tick(dt) {
       addScore(25 * (G.sea.closeMult || 1), TEXTS.closeCall, '#ff6b6b', toScreen(new THREE.Vector3(b.x, 3, b.z)));
     }
   });
+  G.rafts = G.rafts.filter(r => {
+    r.z += flow * dt; r.mesh.position.z = r.z; r.mesh.position.y = 0.2 + Math.sin(clock * 2 + r.x) * 0.07;
+    if (playing && Math.abs(r.x - G.x) < 3.1 && r.z > bowZ - 1 && r.z < SHIP_Z + 6) { scene.remove(r.mesh); Sfx.coin(G.combo + 2); bumpCombo(); addPeople(r.n, toScreen(new THREE.Vector3(r.x, 2, r.z))); addScore(15, null); setSteam(G.steam + 9); return false; }
+    if (r.z > 60) { scene.remove(r.mesh); return false; } return true;
+  });
+  G.gates = G.gates.filter(g => {
+    g.z += flow * dt; g.mesh.position.z = g.z;
+    if (!g.used && playing && g.z >= bowZ) { g.used = true; const side = G.x < 0 ? 0 : 1, pick = g.pair[side]; pick.run(toScreen(new THREE.Vector3(G.x, 5, g.z))); if (!pick.bad) { Sfx.star(2); kick(); } g.mesh.children[side].scale.setScalar(1.25); g.mesh.children[1 - side].visible = false; checkMissions(); }
+    if (g.used) g.mesh.children.forEach(c => { if (c.material.transparent) c.material.opacity = Math.max(0, c.material.opacity - dt * 2.5); });
+    if (g.z > 50) { scene.remove(g.mesh); g.mesh.children.forEach(c => c.material.transparent && c.material.dispose()); return false; } return true;
+  });
   G.buoys.forEach(b => {
     b.z += flow * dt; b.mesh.position.z = b.z; b.mesh.position.y = 0.25 + Math.sin(clock * 3 + b.x) * 0.08; b.mesh.rotation.z += dt;
     if (!b.got && playing && Math.abs(b.x - G.x) < 2.6 && Math.abs(b.z - bowZ) < 2.5) {
       b.got = true; scene.remove(b.mesh); Sfx.coin(G.combo); bumpCombo();
       addScore(10 * (G.sea.buoyMult || 1), '🛟', '#ffb060', toScreen(new THREE.Vector3(b.x, 2, b.z)));
-      G.lifebuoys++; G.stats.buoys++;
+      G.lifebuoys++; G.stats.buoys++; setSteam(G.steam + 6);
       if (G.lifebuoys % 5 === 0) {
         if (G.flooded > 0) { const c = $('cells').children[G.flooded - 1]; c.classList.remove('flooded'); c.classList.add('repaired'); G.flooded--; floatText('🛟×5 → HULL REPAIRED!', '#36d67a'); Sfx.win(); }
         else addScore(100, '🛟×5 BONUS', '#36d67a');
@@ -922,7 +1001,7 @@ function updateCamera(dt) {
   }
   cam.pos.lerp(pos, Math.min(dt * 2.4, 1)); cam.look.lerp(look, Math.min(dt * 2.4, 1));
   camera.position.copy(cam.pos);
-  const fovT = 48 + (G && G.state === 'play' ? G.throttle * 5 + (G.slow > 0 ? -4 : 0) : 0);
+  const fovT = 48 + (G && G.state === 'play' ? G.throttle * 5 + (G.boost > 0 ? 9 : 0) + (G.slow > 0 ? -4 : 0) : 0);
   if (Math.abs(camera.fov - fovT) > 0.05) { camera.fov += (fovT - camera.fov) * Math.min(1, dt * 3); camera.updateProjectionMatrix(); }
   if (cam.shake > 0) { cam.shake = Math.max(0, cam.shake - dt); const s = cam.shake * 0.8 * (progress.settings.shake === false ? 0 : 1); camera.position.x += (Math.random() - .5) * s; camera.position.y += (Math.random() - .5) * s; }
   camera.lookAt(cam.look);
